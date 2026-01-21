@@ -6,6 +6,7 @@ import { ReceiptImage } from '../../components/Receipt/ReceiptImage';
 import { PaymentButton } from '../../components/Payment/PaymentButton';
 import { PaymentModal } from '../../components/Payment/PaymentModal';
 import { ShareModal } from '../../components/Split/ShareModal';
+import { signAndSubmitPayment } from '../../utils/stellar/wallet';
 import { LoadingSkeleton } from '../../components/Split/LoadingSkeleton';
 import type { Split } from '../../types';
 import { useEffect } from 'react';
@@ -69,19 +70,24 @@ export const SplitDetailPage = () => {
         );
     }
 
-    const handlePayment = () => {
+    const handlePayment = async () => {
         setIsProcessingPayment(true);
-        // Simulate API call
-        setTimeout(() => {
+        try {
+            const result = await signAndSubmitPayment(currentUser!.amountOwed, 'STELLAR_SPLIT_HUB');
+            if (result.success) {
+                setSplit(prev => ({
+                    ...prev,
+                    participants: prev.participants.map(p =>
+                        p.isCurrentUser ? { ...p, status: 'paid' } : p
+                    )
+                }));
+                setIsPaymentModalOpen(false);
+            }
+        } catch (error) {
+            console.error("Payment failed", error);
+        } finally {
             setIsProcessingPayment(false);
-            setSplit(prev => ({
-                ...prev,
-                participants: prev.participants.map(p =>
-                    p.isCurrentUser ? { ...p, status: 'paid' } : p
-                )
-            }));
-            setIsPaymentModalOpen(false);
-        }, 2000);
+        }
     };
 
     return (
