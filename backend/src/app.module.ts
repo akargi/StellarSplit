@@ -7,6 +7,7 @@ import databaseConfig from './config/database.config';
 import appConfig from './config/app.config';
 import { HealthModule } from './modules/health/health.module';
 import { CurrencyModule } from './modules/currency/currency.module';
+import { SplitsModule } from './modules/splits/splits.module';
 
 // Load environment variables
 dotenv.config({
@@ -39,6 +40,7 @@ dotenv.config({
     }),
     HealthModule,
     CurrencyModule,
+    SplitsModule,
   ],
 })
 export class AppModule {}
