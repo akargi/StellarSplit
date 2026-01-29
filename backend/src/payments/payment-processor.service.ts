@@ -13,6 +13,7 @@ import { Payment } from "../entities/payment.entity";
 import { Participant } from "../entities/participant.entity";
 import { Split } from "../entities/split.entity";
 import { EmailService } from "../email/email.service";
+import { MultiCurrencyService } from "../multi-currency/multi-currency.service";
 
 @Injectable()
 export class PaymentProcessorService {
@@ -26,6 +27,7 @@ export class PaymentProcessorService {
     private participantRepository: Repository<Participant>,
     @InjectRepository(Split) private splitRepository: Repository<Split>,
     private readonly emailService: EmailService,
+    private readonly multiCurrencyService: MultiCurrencyService,
   ) {}
 
   /**
@@ -76,48 +78,114 @@ export class PaymentProcessorService {
         );
       }
 
-      // Validate that payment matches participant's owed amount
-      if (verificationResult.amount < participant.amountOwed) {
+      // Get split to check preferred currency
+      const split = await this.splitRepository.findOne({
+        where: { id: splitId },
+      });
+
+      if (!split) {
+        throw new NotFoundException(`Split ${splitId} not found`);
+      }
+
+      // Determine the paid asset (from path payment source or regular payment)
+      const paidAsset = verificationResult.isPathPayment && verificationResult.sourceAsset
+        ? verificationResult.sourceAsset
+        : verificationResult.asset;
+
+      const paidAmount = verificationResult.isPathPayment && verificationResult.sourceAmount
+        ? verificationResult.sourceAmount
+        : verificationResult.amount;
+
+      // Process multi-currency payment if needed
+      let receivedAmount = verificationResult.amount;
+      let receivedAsset = verificationResult.asset;
+      let multiCurrencyResult = null;
+
+      // Check if conversion is needed (paid asset differs from received asset)
+      if (verificationResult.isPathPayment || paidAsset !== receivedAsset) {
+        try {
+          multiCurrencyResult = await this.multiCurrencyService.processMultiCurrencyPayment({
+            splitId,
+            participantId,
+            txHash,
+            paidAsset,
+            paidAmount,
+            receivedAsset: (split as any).preferredCurrency || receivedAsset,
+            slippageTolerance: 0.01, // 1% slippage tolerance
+          });
+
+          receivedAmount = multiCurrencyResult.receivedAmount;
+          receivedAsset = multiCurrencyResult.receivedAsset;
+        } catch (error: any) {
+          this.logger.warn(
+            `Multi-currency processing failed, using direct payment: ${error.message}`,
+          );
+          // Fall back to direct payment processing
+        }
+      }
+
+      // Validate that payment matches participant's owed amount (use received amount after conversion)
+      if (receivedAmount < participant.amountOwed) {
         // Handle partial payment
         await this.handlePartialPayment(
           splitId,
           participantId,
           participant,
-          verificationResult,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
           txHash,
+        );
+
+        const paymentId = await this.createPaymentRecord(
+          splitId,
+          participantId,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
+          txHash,
+          "partial",
         );
 
         return {
           success: true,
-          message: `Partial payment received. Amount: ${verificationResult.amount} ${verificationResult.asset}. Expected: ${participant.amountOwed}`,
-          paymentId: await this.createPaymentRecord(
-            splitId,
-            participantId,
-            verificationResult,
-            txHash,
-            "partial",
-          ),
+          message: `Partial payment received. Amount: ${paidAmount} ${paidAsset}${multiCurrencyResult?.requiresConversion ? ` (converted to ${receivedAmount} ${receivedAsset})` : ''}. Expected: ${participant.amountOwed}`,
+          paymentId,
         };
-      } else if (verificationResult.amount > participant.amountOwed) {
+      } else if (receivedAmount > participant.amountOwed) {
         // Overpayment scenario - still mark as paid but note the overpayment
         await this.handleCompletePayment(
           splitId,
           participantId,
           participant,
-          verificationResult,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
           txHash,
+        );
+
+        const paymentId = await this.createPaymentRecord(
+          splitId,
+          participantId,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
+          txHash,
+          "confirmed",
         );
 
         return {
           success: true,
-          message: `Payment received with overpayment. Amount: ${verificationResult.amount} ${verificationResult.asset}. Expected: ${participant.amountOwed}`,
-          paymentId: await this.createPaymentRecord(
-            splitId,
-            participantId,
-            verificationResult,
-            txHash,
-            "confirmed",
-          ),
+          message: `Payment received with overpayment. Amount: ${paidAmount} ${paidAsset}${multiCurrencyResult?.requiresConversion ? ` (converted to ${receivedAmount} ${receivedAsset})` : ''}. Expected: ${participant.amountOwed}`,
+          paymentId,
         };
       } else {
         // Exact payment
@@ -125,20 +193,30 @@ export class PaymentProcessorService {
           splitId,
           participantId,
           participant,
-          verificationResult,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
           txHash,
+        );
+
+        const paymentId = await this.createPaymentRecord(
+          splitId,
+          participantId,
+          {
+            ...verificationResult,
+            amount: receivedAmount,
+            asset: receivedAsset,
+          },
+          txHash,
+          "confirmed",
         );
 
         return {
           success: true,
-          message: `Payment confirmed. Amount: ${verificationResult.amount} ${verificationResult.asset}`,
-          paymentId: await this.createPaymentRecord(
-            splitId,
-            participantId,
-            verificationResult,
-            txHash,
-            "confirmed",
-          ),
+          message: `Payment confirmed. Amount: ${paidAmount} ${paidAsset}${multiCurrencyResult?.requiresConversion ? ` (converted to ${receivedAmount} ${receivedAsset})` : ''}`,
+          paymentId,
         };
       }
     } catch (error: any) {

@@ -26,6 +26,19 @@ export class Split {
   @Column({ type: "text", nullable: true })
   description?: string;
 
+  /**
+   * Preferred currency for settlement (e.g., 'XLM', 'USDC:GA5Z...', 'EURC:GA5Z...')
+   * Defaults to 'XLM' if not specified
+   */
+  @Column({ type: "varchar", length: 100, nullable: true, default: "XLM" })
+  preferredCurrency?: string;
+
+  /**
+   * Creator's Stellar wallet address for receiving payments
+   */
+  @Column({ type: "varchar", length: 56, nullable: true })
+  creatorWalletAddress?: string;
+
   @CreateDateColumn()
   createdAt!: Date;
 

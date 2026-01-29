@@ -9,12 +9,14 @@ import { Payment } from "../entities/payment.entity";
 import { Participant } from "../entities/participant.entity";
 import { Split } from "../entities/split.entity";
 import { EmailModule } from "../email/email.module";
+import { MultiCurrencyModule } from "../multi-currency/multi-currency.module";
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Payment, Participant, Split]),
     StellarModule,
     EmailModule,
+    MultiCurrencyModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService, PaymentProcessorService, PaymentGateway],

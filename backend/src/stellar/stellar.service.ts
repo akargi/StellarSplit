@@ -28,6 +28,10 @@ export class StellarService {
     sender: string;
     receiver: string;
     timestamp: string;
+    sourceAmount?: number;
+    sourceAsset?: string;
+    isPathPayment?: boolean;
+    path?: string[];
   } | null> {
     try {
       this.logger.log(`Verifying transaction: ${txHash}`);
@@ -83,28 +87,63 @@ export class StellarService {
       let amount = 0;
       let asset = '';
       let receiver = '';
+      let sourceAmount: number | undefined;
+      let sourceAsset: string | undefined;
+      let isPathPayment = false;
+      let path: string[] | undefined;
 
       if (paymentOp.type === 'payment') {
         const paymentOperation = paymentOp as HorizonApi.PaymentOperationResponse;
         amount = parseFloat(paymentOperation.amount);
-        asset = `${paymentOperation.asset_type === 'native' ? 'XLM' : paymentOperation.asset_code}-${paymentOperation.asset_issuer}`;
+        asset = paymentOperation.asset_type === 'native' 
+          ? 'XLM' 
+          : `${paymentOperation.asset_code}:${paymentOperation.asset_issuer}`;
         receiver = paymentOperation.to;
       } else if (paymentOp.type.includes('path_payment')) {
-        // For path payments, use the destination amount
+        isPathPayment = true;
+        // For path payments, extract both source and destination details
         if (paymentOp.type === 'path_payment_strict_receive') {
-          const strictReceiveOp = paymentOp as HorizonApi.PathPaymentOperationResponse;
+          const strictReceiveOp = paymentOp as any; // Using any due to SDK type inconsistencies
           amount = parseFloat(strictReceiveOp.amount);
-          asset = `${strictReceiveOp.asset_type === 'native' ? 'XLM' : strictReceiveOp.asset_code}-${strictReceiveOp.asset_issuer}`;
+          asset = (strictReceiveOp.dest_asset_type || strictReceiveOp.asset_type) === 'native'
+            ? 'XLM'
+            : `${strictReceiveOp.dest_asset_code || strictReceiveOp.asset_code}:${strictReceiveOp.dest_asset_issuer || strictReceiveOp.asset_issuer}`;
           receiver = strictReceiveOp.to;
+          sourceAmount = parseFloat(strictReceiveOp.source_amount);
+          sourceAsset = strictReceiveOp.source_asset_type === 'native'
+            ? 'XLM'
+            : `${strictReceiveOp.source_asset_code}:${strictReceiveOp.source_asset_issuer}`;
+          
+          // Extract path
+          if (strictReceiveOp.path && strictReceiveOp.path.length > 0) {
+            path = strictReceiveOp.path.map((p: any) => 
+              p.asset_type === 'native' ? 'XLM' : `${p.asset_code}:${p.asset_issuer}`
+            );
+          }
         } else if (paymentOp.type === 'path_payment_strict_send') {
-          const strictSendOp = paymentOp as HorizonApi.PathPaymentStrictSendOperationResponse;
-          amount = parseFloat(strictSendOp.amount);
-          asset = `${strictSendOp.asset_type === 'native' ? 'XLM' : strictSendOp.asset_code}-${strictSendOp.asset_issuer}`;
-          receiver = strictSendOp.to;
+          const strictSendOp = paymentOp as any; // Using any due to SDK type inconsistencies
+          amount = parseFloat(strictSendOp.destination_amount || strictSendOp.amount);
+          asset = (strictSendOp.destination_asset_type || strictSendOp.asset_type) === 'native'
+            ? 'XLM'
+            : `${strictSendOp.destination_asset_code || strictSendOp.asset_code}:${strictSendOp.destination_asset_issuer || strictSendOp.asset_issuer}`;
+          receiver = strictSendOp.destination || strictSendOp.to;
+          sourceAmount = parseFloat(strictSendOp.amount || strictSendOp.source_amount);
+          sourceAsset = strictSendOp.asset_type === 'native'
+            ? 'XLM'
+            : `${strictSendOp.asset_code}:${strictSendOp.asset_issuer}`;
+          
+          // Extract path
+          if (strictSendOp.path && strictSendOp.path.length > 0) {
+            path = strictSendOp.path.map((p: any) => 
+              p.asset_type === 'native' ? 'XLM' : `${p.asset_code}:${p.asset_issuer}`
+            );
+          }
         }
       }
 
-      this.logger.log(`Successfully verified transaction: ${txHash}, amount: ${amount} ${asset}`);
+      this.logger.log(
+        `Successfully verified transaction: ${txHash}, amount: ${amount} ${asset}${isPathPayment ? ` (path payment from ${sourceAmount} ${sourceAsset})` : ''}`,
+      );
 
       return {
         valid: true,
@@ -113,6 +152,10 @@ export class StellarService {
         sender: transaction.source_account,
         receiver,
         timestamp: transaction.created_at,
+        sourceAmount,
+        sourceAsset,
+        isPathPayment,
+        path,
       };
     } catch (error) {
       this.logger.error(`Error verifying transaction ${txHash}:`, error);

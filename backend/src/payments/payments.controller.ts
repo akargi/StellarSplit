@@ -1,12 +1,16 @@
-import { Controller, Post, Get, Body, Param, Logger, ValidationPipe } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Logger, ValidationPipe, Query } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
+import { MultiCurrencyService } from '../multi-currency/multi-currency.service';
 
 @Controller('payments')
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
 
-  constructor(private readonly paymentsService: PaymentsService) {}
+  constructor(
+    private readonly paymentsService: PaymentsService,
+    private readonly multiCurrencyService: MultiCurrencyService,
+  ) {}
 
   @Post('/submit')
   async submitPayment(@Body(ValidationPipe) submitPaymentDto: SubmitPaymentDto) {
@@ -49,5 +53,50 @@ export class PaymentsController {
     this.logger.log(`Getting payment stats for split: ${splitId}`);
     
     return await this.paymentsService.getPaymentStatsForSplit(splitId);
+  }
+
+  /**
+   * Get path payment transaction for multi-currency conversion
+   * Builds a path payment transaction that the client can sign and submit
+   */
+  @Get('/path-payment/:splitId/:participantId')
+  async getPathPaymentTransaction(
+    @Param('splitId') splitId: string,
+    @Param('participantId') participantId: string,
+    @Query('sourceAsset') sourceAsset: string,
+    @Query('destinationAmount') destinationAmount: string,
+    @Query('slippageTolerance') slippageTolerance?: string,
+  ) {
+    this.logger.log(
+      `Getting path payment transaction for split ${splitId}, participant ${participantId}`,
+    );
+
+    return await this.multiCurrencyService.getPathPaymentTransaction(
+      splitId,
+      participantId,
+      sourceAsset,
+      parseFloat(destinationAmount),
+      slippageTolerance ? parseFloat(slippageTolerance) : 0.01,
+    );
+  }
+
+  /**
+   * Get supported assets for multi-currency payments
+   */
+  @Get('/supported-assets')
+  async getSupportedAssets() {
+    this.logger.log('Getting supported assets');
+    return {
+      assets: this.multiCurrencyService.getSupportedAssets(),
+    };
+  }
+
+  /**
+   * Get multi-currency payment details
+   */
+  @Get('/multi-currency/:paymentId')
+  async getMultiCurrencyPayment(@Param('paymentId') paymentId: string) {
+    this.logger.log(`Getting multi-currency payment details for ${paymentId}`);
+    return await this.multiCurrencyService.getMultiCurrencyPayment(paymentId);
   }
 }
