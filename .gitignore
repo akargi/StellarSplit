@@ -59,3 +59,13 @@ Thumbs.db
 *.pem
 *.key
 *.crt
+
+# ========================
+# Rust / Soroban
+# ========================
+contracts/target/
+contracts/**/target/
+**/*.rs.bk
+*.wasm
+contracts/.contract-id-*
+Cargo.lock
